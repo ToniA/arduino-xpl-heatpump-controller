@@ -48,6 +48,12 @@ Supported parameters
 		
 Schema
 ------
+
+Bill of materials
+* Arduino :)
+* Arduino Ethernet shield
+* IR led
+* 1 kOhm resistor for the IR led
 		
 Connect an IR led (with 1k resistor in series) between GND and digital pin 3
 
