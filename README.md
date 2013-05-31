@@ -1,7 +1,7 @@
 arduino-xpl-heatpump-controller
 =====================================
 
-Control a Panasonic heat pump/split unit air conditioner with Arduino
+Control a Panasonic heat pump/split unit air conditioner with Arduino using the xPL protocol
 * Currently supports at least models E9/E12-CKP and E9/E12-DKE (Panasonic remote control P/N A75C2295 and P/N A75C2616)
 
 Some xPL-perl example commands:
