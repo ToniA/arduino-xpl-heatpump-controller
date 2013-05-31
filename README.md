@@ -6,4 +6,4 @@ Control a Panasonic heat pump/split unit air conditioner with Arduino
 
 Connect an IR led (with 1k resistor in series) between GND and digital pin 3
 
-Browse to http://192.168.0.210 (or whatever you set as the address)
+![Schema](https://raw.github.com/ToniA/arduino-xpl-heatpump-controller/master/arduino_irsender_bb.png)
