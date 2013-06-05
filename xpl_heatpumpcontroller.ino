@@ -6,6 +6,7 @@
 // between GND and digital pin 3
 //
 // Requires the Ethernet shield and xPL
+//
 
 #include <Arduino.h>
 #include "SPI.h"
@@ -14,6 +15,7 @@
 
 #include <Ethernet.h>
 #include <EthernetUdp.h>
+#include <EEPROM.h>
 #include "xPL.h" // from https://github.com/ToniA/arduino-xpl
 
 // xPL stuff, see the example xPL_Send_Arduino
@@ -22,7 +24,9 @@ xPL xpl;
 
 // Enter a MAC address and IP address for your controller below.
 // The IP address will be dependent on your local network:
-byte mac[] = { 0x52, 0x8E, 0xD2, 0x5E, 0x20, 0xCE };
+byte macAddress[] = { 0x02, 0x26, 0x89, 0x00, 0x00, 0x00 };
+char macstr[18];
+
 IPAddress ip(192, 168, 0, 12);  // This MAC/IP address pair is also set as a static lease on the router
 IPAddress broadcast(192, 168, 0, 255);
 EthernetUDP Udp;
@@ -40,6 +44,9 @@ void SendUdPMessage(char *buffer)
 
 // Ethernet shield reset pin
 #define ETHERNET_RST      A0
+
+// Entropy pin needs to be unconnected
+#define ENTROPY_PIN       A5
 
 // Panasonic CKP timing constants
 #define PANASONIC_AIRCON1_HDR_MARK   3400
@@ -630,8 +637,11 @@ void setup()
   digitalWrite(ETHERNET_RST, HIGH);
   delay(100);
 
+  // generate or read the already generated MAC address
+  generateMAC();
+
   // initialize the Ethernet adapter
-  Ethernet.begin(mac, ip);
+  Ethernet.begin(macAddress, ip);
 
   // initialize the xPL UDP port
   Udp.begin(xpl.udp_port);
@@ -665,4 +675,51 @@ void loop()
     // parse message
     xpl.ParseInputMessage(xPLMessageBuff);
   }
+}
+
+// Random MAC based on:
+// http://files.pcode.nl/arduino/EthernetPersistentMAC.ino
+// A5 is the entropy PIN for random MAC generation, leave it unconnected
+
+void generateMAC()
+{
+  randomSeed(analogRead(ENTROPY_PIN));
+ 
+  // Uuncomment to generate a new MAC
+  //EEPROM.write(E2END - 8, 0x00);
+  //EEPROM.write(E2END - 7, 0x00);
+  
+  // We store the MAC address in the last 8 bytes of the EEPROM using E2END to determine it's size
+  // The first of those two bytes are checked for the magic values 0x80 and 0x23 (a reference to 802.3)
+
+  if ((EEPROM.read(E2END - 8) == 0x80) && (EEPROM.read(E2END - 7) == 0x23))
+  {
+    Serial.println("Reading MAC address from EEPROM");
+    for (int i = 0; i <= 5; i++)
+    {
+       macAddress[i] = EEPROM.read(E2END - 6 + i);
+    }
+  }
+  else
+  {
+    Serial.println("Writing new random MAC address to EEPROM");
+    
+    EEPROM.write(E2END - 8, 0x80);
+    EEPROM.write(E2END - 7, 0x23);
+    for (int i = 0; i <= 5; i++)
+    {
+      // Skip the Organisationally Unique Identifier (OUI) 
+      // Randomize only the Network Interface Controller specific part
+      if (i >= 3)
+      {
+        macAddress[i] = random(0, 255);
+      }
+      EEPROM.write(E2END - 6 + i, macAddress[i]);
+    }
+  }
+  snprintf(macstr, 18, "%02X:%02X:%02X:%02X:%02X:%02X", macAddress[0], macAddress[1], macAddress[2], macAddress[3], macAddress[4], macAddress[5]);
+
+  // Print out the MAC address
+  Serial.print("MAC: ");
+  Serial.println(macstr);
 }
