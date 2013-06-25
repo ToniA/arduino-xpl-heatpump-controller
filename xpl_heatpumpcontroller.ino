@@ -115,6 +115,28 @@ void SendUdPMessage(char *buffer)
 #define PANASONIC_AIRCON2_HS_MRIGHT  0x0B
 #define PANASONIC_AIRCON2_HS_RIGHT   0x0C
 
+// Midea timing constants
+#define MIDEA_AIRCON1_HDR_MARK       4350
+#define MIDEA_AIRCON1_HDR_SPACE      4230
+#define MIDEA_AIRCON1_BIT_MARK       520
+#define MIDEA_AIRCON1_ONE_SPACE      1650
+#define MIDEA_AIRCON1_ZERO_SPACE     550
+#define MIDEA_AIRCON1_MSG_SPACE      5100
+
+// MIDEA codes
+#define MIDEA_AIRCON1_MODE_AUTO      0x10 // Operating mode
+#define MIDEA_AIRCON1_MODE_HEAT      0x30
+#define MIDEA_AIRCON1_MODE_COOL      0x00
+#define MIDEA_AIRCON1_MODE_DRY       0x20
+#define MIDEA_AIRCON1_MODE_FAN       0x60
+#define MIDEA_AIRCON1_MODE_FP        0x70 // Not a real mode...
+#define MIDEA_AIRCON1_MODE_OFF       0xFE // Power OFF - not real codes, but we need something...
+#define MIDEA_AIRCON1_MODE_ON        0xFF // Power ON
+#define MIDEA_AIRCON1_FAN_AUTO       0x02 // Fan speed
+#define MIDEA_AIRCON1_FAN1           0x06
+#define MIDEA_AIRCON1_FAN2           0x05
+#define MIDEA_AIRCON1_FAN3           0x03
+
 
 // Send the Panasonic CKP code
 
@@ -232,9 +254,9 @@ void sendPanasonicCKPOnOff(boolean powerState)
   space(0);
 }
 
-// Send the Panasonic DKE raw code
+// Send the Panasonic DKE code
 
-void sendPanasonicDKEraw(byte operatingMode, byte fanSpeed, byte temperature, byte swingV, byte swingH)
+void sendPanasonicDKE(byte operatingMode, byte fanSpeed, byte temperature, byte swingV, byte swingH)
 {
   byte DKE_template[] = { 0x02, 0x20, 0xE0, 0x04, 0x00, 0x00, 0x00, 0x06, 0x02, 0x20, 0xE0, 0x04, 0x00, 0x48, 0x2E, 0x80, 0xA3, 0x0D, 0x00, 0x0E, 0xE0, 0x00, 0x00, 0x01, 0x00, 0x06, 0xA2 };
   byte checksum = 0xF4;
@@ -281,6 +303,81 @@ void sendPanasonicDKEraw(byte operatingMode, byte fanSpeed, byte temperature, by
   space(0);
 }
 
+// Send the Midea code
+
+void sendMidea(byte operatingMode, byte fanSpeed, byte temperature)
+{
+  byte sendBuffer[3] = { 0x4D, 0x00, 0x00 }; // First byte is always 0x4D
+
+  byte temperatures[] = {0, 8, 12, 4, 6, 14, 10, 2, 3, 11, 9, 1, 5, 13 };
+
+  byte OffMsg[] = {0x4D, 0xDE, 0x07 };
+  byte FPMsg[]  = {0xAD, 0xAF, 0xB5 };
+
+  if (operatingMode == MIDEA_AIRCON1_MODE_OFF)
+  {
+    sendMidearaw( OffMsg );
+  }
+  else if (operatingMode == MIDEA_AIRCON1_MODE_FP)
+  {
+    sendMidearaw( FPMsg );
+  }
+  else
+  {
+    sendBuffer[1] = ~fanSpeed;
+
+    if ( operatingMode == MIDEA_AIRCON1_MODE_FAN )
+    {
+      sendBuffer[2] = MIDEA_AIRCON1_MODE_DRY | 0x07;
+    }
+    else
+    {
+      sendBuffer[2] = operatingMode | temperatures[temperature-17];
+    }
+
+    // Send the code
+    sendMidearaw(sendBuffer);
+  }
+}
+
+// Send the Midea raw code
+
+void sendMidearaw(byte sendBuffer[])
+{
+  // 40 kHz PWM frequency
+  enableIROut(40);
+
+  // Header
+  mark(MIDEA_AIRCON1_HDR_MARK);
+  space(MIDEA_AIRCON1_HDR_SPACE);
+
+  // Six bytes, every second byte is a bitwise not of the previous byte
+  for (int i=0; i<3; i++) {
+    sendIRByte(sendBuffer[i], MIDEA_AIRCON1_BIT_MARK, MIDEA_AIRCON1_ZERO_SPACE, MIDEA_AIRCON1_ONE_SPACE);
+    sendIRByte(~sendBuffer[i], MIDEA_AIRCON1_BIT_MARK, MIDEA_AIRCON1_ZERO_SPACE, MIDEA_AIRCON1_ONE_SPACE);
+  }
+
+  // Pause
+
+  mark(MIDEA_AIRCON1_BIT_MARK);
+  space(MIDEA_AIRCON1_MSG_SPACE);
+
+  // Header, two last bytes repeated
+
+  mark(MIDEA_AIRCON1_HDR_MARK);
+  space(MIDEA_AIRCON1_HDR_SPACE);
+
+  // Six bytes, every second byte is a bitwise not of the previous byte
+  for (int i=0; i<3; i++) {
+    sendIRByte(sendBuffer[i], MIDEA_AIRCON1_BIT_MARK, MIDEA_AIRCON1_ZERO_SPACE, MIDEA_AIRCON1_ONE_SPACE);
+    sendIRByte(~sendBuffer[i], MIDEA_AIRCON1_BIT_MARK, MIDEA_AIRCON1_ZERO_SPACE, MIDEA_AIRCON1_ONE_SPACE);
+  }
+
+  // End mark
+
+  mark(MIDEA_AIRCON1_BIT_MARK);
+  space(0);
+}
 
 // Send a byte over IR
 
@@ -590,7 +687,91 @@ void sendDKECmd(xPL_Message * message)
     }
   }
 
-  sendPanasonicDKEraw(operatingMode, fanSpeed, temperature, swingV, swingH);
+  sendPanasonicDKE(operatingMode, fanSpeed, temperature, swingV, swingH);
+}
+
+// Parse the xPL message and send Panasonic DKE IR codes
+
+void sendMideaCmd(xPL_Message * message)
+{
+  int param = 0;
+  byte i;
+
+  // Sensible defaults for the heat pump mode
+
+  byte operatingMode = MIDEA_AIRCON1_MODE_HEAT;
+  byte fanSpeed      = MIDEA_AIRCON1_FAN_AUTO;
+  byte temperature   = 23;
+
+  for (i=0; i < message->command_count; i++)
+  {
+    param = atoi(message->command[i].value);
+
+    if (strcmp(message->command[i].name, "power") == 0 )
+    {
+      switch (param)
+      {
+        case 0:
+          // OFF is a special case
+          operatingMode = MIDEA_AIRCON1_MODE_OFF;
+          sendMidea(operatingMode, fanSpeed, temperature);
+          return;
+      }
+    }
+    else if (strcmp(message->command[i].name, "mode") == 0 )
+    {
+      switch (param)
+      {
+        case 1:
+          operatingMode = MIDEA_AIRCON1_MODE_AUTO;
+          break;
+        case 2:
+          operatingMode = MIDEA_AIRCON1_MODE_HEAT;
+          break;
+        case 3:
+          operatingMode = MIDEA_AIRCON1_MODE_COOL;
+          break;
+        case 4:
+          operatingMode = MIDEA_AIRCON1_MODE_DRY;
+          break;
+        case 5:
+          operatingMode = MIDEA_AIRCON1_MODE_FAN;
+          break;
+        case 6:
+          // FP is a special case
+          operatingMode = MIDEA_AIRCON1_MODE_FP;
+          sendMidea(operatingMode, fanSpeed, temperature);
+          return;
+      }
+    }
+    else if (strcmp(message->command[i].name, "fan") == 0 )
+    {
+      switch (param)
+      {
+        case 1:
+          fanSpeed = MIDEA_AIRCON1_FAN_AUTO;
+          break;
+        case 2:
+          fanSpeed = MIDEA_AIRCON1_FAN1;
+          break;
+        case 3:
+          fanSpeed = MIDEA_AIRCON1_FAN2;
+          break;
+        case 4:
+          fanSpeed = MIDEA_AIRCON1_FAN3;
+          break;
+      }
+    }
+    else if (strcmp(message->command[i].name, "temperature") == 0 )
+    {
+      if ( param >= 17 && param <= 31 )
+      {
+        temperature = param;
+      }
+    }
+  }
+
+  sendMidea(operatingMode, fanSpeed, temperature);
 }
 
 // parse incoming xPL message
@@ -598,6 +779,8 @@ void sendDKECmd(xPL_Message * message)
 //
 // xpl-sender -m xpl-cmnd -t xpl-arduino.heatpumpctrl -c aircon.ckp power=0 mode=2 fan=3 temperature=23
 // xpl-sender -m xpl-cmnd -t xpl-arduino.heatpumpctrl -c aircon.dke power=0 mode=2 fan=3 temperature=23
+// xpl-sender -m xpl-cmnd -t xpl-arduino.heatpumpctrl -c aircon.midea power=0 mode=2 fan=3 temperature=23
+
 
 void AfterParseAction(xPL_Message * message)
 {
@@ -610,6 +793,10 @@ void AfterParseAction(xPL_Message * message)
       else if (message->IsSchema_P(PSTR("aircon"), PSTR("ckp")))
       {
         sendCKPCmd(message);
+      }
+      else if (message->IsSchema_P(PSTR("aircon"), PSTR("midea")))
+      {
+        sendMideaCmd(message);
       }
 
       Serial.println("Got xPL message:");
